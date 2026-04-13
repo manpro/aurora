@@ -1,0 +1,18 @@
+# Aurora API Proxy Sidecar
+# This runs alongside the main web container to provide CORS-free API access
+
+services:
+  aurora-api-proxy:
+    image: nginx:alpine
+    container_name: aurora-api-proxy
+    ports:
+      - "3129:3129"
+    volumes:
+      - ./nginx-api-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+    networks:
+      - aurora-network
+
+networks:
+  aurora-network:
+    external: true

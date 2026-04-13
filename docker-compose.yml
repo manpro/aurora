@@ -1,0 +1,28 @@
+services:
+  web:
+    build: 
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: aurora-web
+    restart: always
+    ports:
+      - "34370:80"
+    depends_on:
+      - backend
+    networks:
+      - aurora-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aurora-backend
+    restart: always
+    ports:
+      - "34371:3001"
+    networks:
+      - aurora-net
+
+networks:
+  aurora-net:
+    driver: bridge
