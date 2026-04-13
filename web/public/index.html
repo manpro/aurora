@@ -1,0 +1,1763 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aurora - Field Instrument</title>
+    <meta name="description" content="Military-grade aurora forecast. Built for the field.">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#000000">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Fonts -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;900&display=swap"
+        rel="stylesheet">
+
+    <!-- SunCalc Library -->
+    <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.min.js"></script>
+
+    <!-- Leaflet.js Library (must load before plugins) -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+    <!-- Leaflet Heat Plugin (Embedded) -->
+    <script>
+        /*
+         (c) 2014, Vladimir Agafonkin
+         simpleheat, a tiny JavaScript library for drawing heatmaps with Canvas
+         https://github.com/mourner/simpleheat
+        */
+        (function () {
+            "use strict";
+
+            function simpleheat(canvas) {
+                if (!(this instanceof simpleheat)) return new simpleheat(canvas);
+
+                this._canvas = canvas = typeof canvas === 'string' ? document.getElementById(canvas) : canvas;
+                this._ctx = canvas.getContext('2d');
+                this._width = canvas.width;
+                this._height = canvas.height;
+
+                this._max = 1;
+                this._data = [];
+            }
+
+            simpleheat.prototype = {
+
+                defaultRadius: 25,
+
+                defaultGradient: {
+                    0.4: 'blue',
+                    0.6: 'cyan',
+                    0.7: 'lime',
+                    0.8: 'yellow',
+                    1.0: 'red'
+                },
+
+                data: function (data) {
+                    this._data = data;
+                    return this;
+                },
+
+                max: function (max) {
+                    this._max = max;
+                    return this;
+                },
+
+                add: function (point) {
+                    this._data.push(point);
+                    return this;
+                },
+
+                clear: function () {
+                    this._data = [];
+                    return this;
+                },
+
+                radius: function (r, blur) {
+                    blur = blur === undefined ? 15 : blur;
+
+                    // create a grayscale blurred circle image that we'll use for drawing points
+                    var circle = this._circle = document.createElement('canvas'),
+                        ctx = circle.getContext('2d'),
+                        r2 = this._r = r + blur;
+
+                    circle.width = circle.height = r2 * 2;
+
+                    ctx.shadowOffsetX = ctx.shadowOffsetY = r2 * 2;
+                    ctx.shadowBlur = blur;
+                    ctx.shadowColor = 'black';
+
+                    ctx.beginPath();
+                    ctx.arc(-r2, -r2, r, 0, Math.PI * 2, true);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    return this;
+                },
+
+                resize: function () {
+                    this._width = this._canvas.width;
+                    this._height = this._canvas.height;
+                },
+
+                gradient: function (grad) {
+                    // create a 256x1 gradient that we'll use to turn a grayscale heatmap into a colored one
+                    var canvas = document.createElement('canvas'),
+                        ctx = canvas.getContext('2d'),
+                        gradient = ctx.createLinearGradient(0, 0, 0, 256);
+
+                    canvas.width = 1;
+                    canvas.height = 256;
+
+                    for (var i in grad) {
+                        gradient.addColorStop(i, grad[i]);
+                    }
+
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0, 0, 1, 256);
+
+                    this._grad = ctx.getImageData(0, 0, 1, 256).data;
+
+                    return this;
+                },
+
+                draw: function (minOpacity) {
+                    if (!this._circle) this.radius(this.defaultRadius);
+                    if (!this._grad) this.gradient(this.defaultGradient);
+
+                    var ctx = this._ctx;
+
+                    ctx.clearRect(0, 0, this._width, this._height);
+
+                    // draw a grayscale heatmap by putting a blurred circle at each data point
+                    for (var i = 0, len = this._data.length, p; i < len; i++) {
+                        p = this._data[i];
+                        ctx.globalAlpha = Math.max(p[2] / this._max, minOpacity === undefined ? 0.05 : minOpacity);
+                        ctx.drawImage(this._circle, p[0] - this._r, p[1] - this._r);
+                    }
+
+                    // colorize the heatmap, using opacity value of each pixel to get the right color from our gradient
+                    var colored = ctx.getImageData(0, 0, this._width, this._height);
+                    this._colorize(colored.data, this._grad);
+                    ctx.putImageData(colored, 0, 0);
+
+                    return this;
+                },
+
+                _colorize: function (pixels, gradient) {
+                    for (var i = 0, len = pixels.length, j; i < len; i += 4) {
+                        j = pixels[i + 3] * 4; // get gradient color from opacity value
+
+                        if (j) {
+                            pixels[i] = gradient[j];
+                            pixels[i + 1] = gradient[j + 1];
+                            pixels[i + 2] = gradient[j + 2];
+                        }
+                    }
+                }
+            };
+
+            window.simpleheat = simpleheat;
+
+        })();
+
+        /*
+         (c) 2014, Vladimir Agafonkin
+         Leaflet.heat, a tiny and fast heatmap plugin for Leaflet.
+         https://github.com/Leaflet/Leaflet.heat
+        */
+
+        // Capture HeatLayer class locally to survive global L clobbering
+        var HeatLayer = (L.Layer ? L.Layer : L.Class).extend({
+
+            initialize: function (latlngs, options) {
+                this._latlngs = latlngs;
+                L.setOptions(this, options);
+            },
+
+            setLatLngs: function (latlngs) {
+                this._latlngs = latlngs;
+                return this.redraw();
+            },
+
+            addLatLng: function (latlng) {
+                this._latlngs.push(latlng);
+                return this.redraw();
+            },
+
+            setOptions: function (options) {
+                L.setOptions(this, options);
+                if (this._heat) {
+                    this._updateOptions();
+                }
+                return this.redraw();
+            },
+
+            redraw: function () {
+                if (this._heat && !this._frame && !this._map._animating) {
+                    this._frame = L.Util.requestAnimFrame(this._redraw, this);
+                }
+                return this;
+            },
+
+            onAdd: function (map) {
+                this._map = map;
+
+                if (!this._canvas) {
+                    this._initCanvas();
+                }
+
+                if (this.options.pane) {
+                    this.getPane().appendChild(this._canvas);
+                } else {
+                    map._panes.overlayPane.appendChild(this._canvas);
+                }
+
+                map.on('moveend', this._reset, this);
+
+                if (map.options.zoomAnimation && L.Browser.any3d) {
+                    map.on('zoomanim', this._animateZoom, this);
+                }
+
+                this._reset();
+            },
+
+            onRemove: function (map) {
+                if (this.options.pane) {
+                    this.getPane().removeChild(this._canvas);
+                } else {
+                    map.getPanes().overlayPane.removeChild(this._canvas);
+                }
+
+                map.off('moveend', this._reset, this);
+
+                if (map.options.zoomAnimation) {
+                    map.off('zoomanim', this._animateZoom, this);
+                }
+            },
+
+            addTo: function (map) {
+                map.addLayer(this);
+                return this;
+            },
+
+            _initCanvas: function () {
+                var canvas = this._canvas = L.DomUtil.create('canvas', 'leaflet-heatmap-layer leaflet-layer');
+
+                var originProp = L.DomUtil.testProp(['transformOrigin', 'WebkitTransformOrigin', 'msTransformOrigin']);
+                canvas.style[originProp] = '50% 50%';
+
+                var size = this._map.getSize();
+                canvas.width = size.x;
+                canvas.height = size.y;
+
+                var animated = this._map.options.zoomAnimation && L.Browser.any3d;
+                L.DomUtil.addClass(canvas, 'leaflet-zoom-' + (animated ? 'animated' : 'hide'));
+
+                this._heat = simpleheat(canvas);
+                this._updateOptions();
+            },
+
+            _updateOptions: function () {
+                this._heat.radius(this.options.radius || this._heat.defaultRadius, this.options.blur);
+
+                if (this.options.gradient) {
+                    this._heat.gradient(this.options.gradient);
+                }
+                if (this.options.max) {
+                    this._heat.max(this.options.max);
+                }
+            },
+
+            _reset: function () {
+                var topLeft = this._map.containerPointToLayerPoint([0, 0]);
+                L.DomUtil.setPosition(this._canvas, topLeft);
+
+                var size = this._map.getSize();
+
+                if (this._heat._width !== size.x) {
+                    this._canvas.width = this._heat._width = size.x;
+                }
+                if (this._heat._height !== size.y) {
+                    this._canvas.height = this._heat._height = size.y;
+                }
+
+                this._redraw();
+            },
+
+            _redraw: function () {
+                if (!this._map) {
+                    return;
+                }
+                var data = [],
+                    r = this._heat._r,
+                    size = this._map.getSize(),
+                    bounds = new L.Bounds(
+                        L.point([-r, -r]),
+                        size.add([r, r])),
+
+                    max = this.options.max === undefined ? 1 : this.options.max,
+                    maxZoom = this.options.maxZoom === undefined ? this._map.getMaxZoom() : this.options.maxZoom,
+                    v = 1 / Math.pow(2, Math.max(0, Math.min(maxZoom - this._map.getZoom(), 12))),
+                    cellSize = r / 2,
+                    grid = [],
+                    panePos = this._map._getMapPanePos(),
+                    offsetX = panePos.x % cellSize,
+                    offsetY = panePos.y % cellSize,
+                    i, len, p, cell, x, y, j, len2, k;
+
+                // console.time('process');
+                for (i = 0, len = this._latlngs.length; i < len; i++) {
+                    p = this._map.latLngToContainerPoint(this._latlngs[i]);
+                    if (bounds.contains(p)) {
+                        x = Math.floor((p.x - offsetX) / cellSize) + 2;
+                        y = Math.floor((p.y - offsetY) / cellSize) + 2;
+
+                        var alt =
+                            this._latlngs[i].alt !== undefined ? this._latlngs[i].alt :
+                                this._latlngs[i][2] !== undefined ? +this._latlngs[i][2] : 1;
+                        k = alt * v;
+
+                        grid[y] = grid[y] || [];
+                        cell = grid[y][x];
+
+                        if (!cell) {
+                            grid[y][x] = [p.x, p.y, k];
+                        } else {
+                            cell[0] = (cell[0] * cell[2] + p.x * k) / (cell[2] + k);
+                            cell[1] = (cell[1] * cell[2] + p.y * k) / (cell[2] + k);
+                            cell[2] += k;
+                        }
+                    }
+                }
+                // console.timeEnd('process');
+
+                // console.time('draw ' + grid.length);
+                for (i = 0, len = grid.length; i < len; i++) {
+                    if (grid[i]) {
+                        for (j = 0, len2 = grid[i].length; j < len2; j++) {
+                            cell = grid[i][j];
+                            if (cell) {
+                                data.push([
+                                    Math.round(cell[0]),
+                                    Math.round(cell[1]),
+                                    Math.min(cell[2], max)
+                                ]);
+                            }
+                        }
+                    }
+                }
+                // console.timeEnd('draw ' + grid.length);
+
+                this._heat.data(data).draw(this.options.minOpacity);
+
+                this._frame = null;
+            },
+
+            _animateZoom: function (e) {
+                var scale = this._map.getZoomScale(e.zoom),
+                    offset = this._map._getCenterOffset(e.center)._multiplyBy(-scale).subtract(this._map._getMapPanePos());
+
+                if (L.DomUtil.setTransform) {
+                    L.DomUtil.setTransform(this._canvas, offset, scale);
+
+                } else {
+                    this._canvas.style[L.DomUtil.TRANSFORM] = L.DomUtil.getTranslateString(offset) + ' scale(' + scale + ')';
+                }
+            }
+        });
+
+        L.HeatLayer = HeatLayer;
+        L.heatLayer = function (latlngs, options) {
+            return new HeatLayer(latlngs, options);
+        };
+
+        console.log("--- DEBUG: Embedded Leaflet Heat Loaded Successfully ---");
+        window.auroraHeatLayerFactory = L.heatLayer;
+        console.log("--- DEBUG: window.L.heatLayer is:", typeof window.L.heatLayer);
+    </script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'aurora-green': '#00ff9d',
+                        'aurora-red': '#ff0000',
+                        'aurora-yellow': '#ffcc00',
+                    },
+                    fontFamily: {
+                        mono: ['"JetBrains Mono"', 'monospace'],
+                        sans: ['"Inter"', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100%;
+        }
+
+        body {
+            background: #000;
+            color: #fff;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .glass-panel {
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Red Mode */
+        body.red-mode {
+            background: #000 !important;
+        }
+
+        body.red-mode * {
+            color: #ff0000 !important;
+            border-color: #500 !important;
+        }
+
+        body.red-mode .glass-panel {
+            background: #000 !important;
+            backdrop-filter: none !important;
+        }
+
+        body.red-mode .bg-aurora-green,
+        body.red-mode .bg-aurora-yellow {
+            background: #ff0000 !important;
+        }
+
+        body.red-mode .bg-white {
+            background: #330000 !important;
+            color: #ff0000 !important;
+        }
+
+        body.red-mode #map {
+            filter: grayscale(100%) sepia(100%) hue-rotate(-50deg) saturate(500%) brightness(0.5);
+        }
+
+        body.red-mode .leaflet-tile {
+            filter: brightness(0.3);
+        }
+
+        .btn-field {
+            min-height: 48px;
+            touch-action: manipulation;
+        }
+
+        .leaflet-control-attribution {
+            display: none !important;
+        }
+
+        @keyframes pulse-location {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.5);
+                opacity: 0.5;
+            }
+        }
+
+        .user-pulse {
+            animation: pulse-location 2s ease-in-out infinite;
+        }
+
+        .mini-hud {
+            max-height: 100px;
+            transition: max-height 0.3s ease-out;
+            overflow: hidden;
+        }
+
+        .mini-hud.expanded {
+            max-height: 500px;
+        }
+
+        @keyframes pulse-glow {
+
+            0%,
+            100% {
+                text-shadow: 0 0 15px currentColor;
+            }
+
+            50% {
+                text-shadow: 0 0 30px currentColor, 0 0 45px currentColor;
+            }
+        }
+
+        .big-number {
+            animation: pulse-glow 3s ease-in-out infinite;
+        }
+
+        .chevron {
+            transition: transform 0.3s;
+        }
+
+        .expanded .chevron {
+            transform: rotate(180deg);
+        }
+
+        /* Magnetometer Cursor */
+        #mag-cursor {
+            position: absolute;
+            top: -4px;
+            width: 2px;
+            height: 16px;
+            background: white;
+            box-shadow: 0 0 8px white;
+            transition: left 0.3s ease-out;
+            z-index: 10;
+        }
+
+        /* Compass arrow on user marker */
+        .compass-arrow {
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 16px solid #00ff9d;
+            filter: drop-shadow(0 0 4px rgba(0, 255, 157, 0.8));
+            transition: transform 0.15s ease-out;
+        }
+
+        .user-marker-container {
+            position: relative;
+        }
+
+        /* Timeline slider */
+        .timeline-container {
+            position: absolute;
+            bottom: 110px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+        }
+
+        .timeline-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 200px;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #00ff9d 0%, #ffcc00 50%, #ff6b6b 100%);
+            outline: none;
+            opacity: 0.9;
+        }
+
+        .timeline-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        body.red-mode .compass-arrow {
+            border-bottom-color: #ff0000;
+            filter: drop-shadow(0 0 4px rgba(255, 0, 0, 0.8));
+        }
+
+        /* FAB buttons */
+        .fab {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s;
+        }
+
+        .fab:active {
+            transform: scale(0.9);
+        }
+
+        /* Layers menu */
+        .layers-menu {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 100%;
+            margin-top: 8px;
+            min-width: 200px;
+        }
+
+        .layers-menu.open {
+            display: block;
+        }
+
+        /* Search results */
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+
+<body class="antialiased">
+
+    <!-- FULLSCREEN MAP -->
+    <div id="map" class="fixed inset-0 z-0 bg-black"></div>
+
+    <!-- HUD LAYER -->
+    <div id="hud" class="fixed inset-0 z-10 flex flex-col pointer-events-none">
+
+        <!-- TOP BAR -->
+        <header class="flex items-start gap-2 p-2 pointer-events-none">
+            <!-- Status Pill (Left) -->
+            <div class="glass-panel rounded-lg px-3 py-2 flex items-center gap-2 pointer-events-auto">
+                <div id="status-pill"
+                    class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-aurora-green text-black">
+                    --</div>
+                <div class="text-xs">
+                    <div id="location-name" class="font-semibold truncate max-w-[100px]">Locating...</div>
+                    <div id="darkness-status" class="text-[9px] text-gray-400 font-mono">--</div>
+                </div>
+            </div>
+
+            <!-- Search Bar (Center, Flex Grow) -->
+            <div class="flex-grow relative pointer-events-auto">
+                <div class="glass-panel rounded-lg px-3 py-2 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input id="search-input" type="text" placeholder="Search location..."
+                        class="bg-transparent text-sm w-full outline-none placeholder-gray-500"
+                        oninput="debounceSearch(this.value)" onfocus="showSearchResults()"
+                        onblur="setTimeout(hideSearchResults, 200)">
+                </div>
+                <div id="search-results" class="search-results glass-panel rounded-lg mt-1 hidden"></div>
+            </div>
+
+            <!-- Layers Button (Right) -->
+            <div class="relative pointer-events-auto">
+                <button onclick="toggleLayersMenu()" class="glass-panel fab" aria-label="Map Layers">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                </button>
+                <div id="layers-menu" class="layers-menu glass-panel rounded-lg p-2">
+                    <div class="text-[10px] uppercase tracking-widest text-gray-400 mb-2 px-2">Map Layers</div>
+
+                    <!-- Cloud Layer Toggle -->
+                    <button onclick="toggleCloudLayer()"
+                        class="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/10 text-left">
+                        <div id="cloud-toggle"
+                            class="w-5 h-5 rounded border border-white/30 flex items-center justify-center">
+                            <svg class="w-3 h-3 hidden" fill="currentColor" viewBox="0 0 20 20">
+                                <path
+                                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm">☁️ Cloud Cover</div>
+                            <div id="cloud-layer-desc" class="text-[9px] text-gray-500">RainViewer Satellite</div>
+                        </div>
+                    </button>
+
+                    <!-- Light Pollution Layer -->
+                    <button onclick="toggleLightPollution()"
+                        class="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/10 text-left">
+                        <div id="pollution-toggle"
+                            class="w-5 h-5 rounded border border-white/30 flex items-center justify-center">
+                            <svg class="w-3 h-3 hidden" fill="currentColor" viewBox="0 0 20 20">
+                                <path
+                                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm">💡 Light Pollution</div>
+                            <div class="text-[9px] text-gray-500">NASA VIIRS Nightlights</div>
+                        </div>
+                    </button>
+
+                    <div class="border-t border-white/10 my-2"></div>
+
+                    <!-- Night Vision Toggle -->
+                    <button onclick="toggleRedMode()"
+                        class="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/10 text-left">
+                        <div id="redmode-toggle"
+                            class="w-5 h-5 rounded border border-white/30 flex items-center justify-center">
+                            <svg class="w-3 h-3 hidden" fill="currentColor" viewBox="0 0 20 20">
+                                <path
+                                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm">👁️ Night Vision</div>
+                            <div class="text-[9px] text-gray-500">Preserve dark adaptation</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Spacer -->
+        <div class="flex-grow"></div>
+
+        <!-- RIGHT SIDE FABs (above bottom sheet) -->
+        <div class="absolute right-2 bottom-28 flex flex-col gap-2 pointer-events-auto">
+            <!-- Sensor Activation (Required for iOS compass) -->
+            <button id="sensor-btn" onclick="requestOrientationPermission()"
+                class="glass-panel fab text-aurora-green border-aurora-green/50" aria-label="Activate Sensors"
+                title="Activate Compass Sensors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+            </button>
+            <!-- My Location FAB -->
+            <button onclick="flyToMyLocation()" class="glass-panel fab" aria-label="My Location"
+                title="Center on my location">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="3" stroke-width="2" />
+                    <path stroke-linecap="round" stroke-width="2" d="M12 2v4m0 12v4M2 12h4m12 0h4" />
+                </svg>
+            </button>
+            <!-- Zoom controls -->
+            <button onclick="map.zoomIn()" class="glass-panel fab" aria-label="Zoom In">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-width="2" d="M12 6v12m-6-6h12" />
+                </svg>
+            </button>
+            <button onclick="map.zoomOut()" class="glass-panel fab" aria-label="Zoom Out">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-width="2" d="M6 12h12" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- TIMELINE SLIDER -->
+        <div class="timeline-container glass-panel rounded-xl px-4 py-2 pointer-events-auto flex flex-col items-center">
+            <div id="forecast-time-display" class="text-[10px] font-mono text-aurora-green mb-1">Forecast: Live</div>
+            <div class="flex items-center gap-3">
+                <span class="text-[9px] font-mono text-gray-400">NOW</span>
+                <input type="range" id="timeline-slider" class="timeline-slider" min="0" max="6" value="0" step="1"
+                    oninput="updateTimeline(this.value)">
+                <span class="text-[9px] font-mono text-gray-400">+6H</span>
+            </div>
+        </div>
+
+        <!-- MINI-HUD (Bottom Sheet) -->
+        <footer id="bottom-sheet" class="glass-panel m-2 rounded-xl pointer-events-auto mini-hud"
+            onclick="toggleExpand()">
+            <!-- Collapsed View -->
+            <div class="flex items-center justify-between p-3">
+                <div class="flex items-center gap-4">
+                    <div id="big-score" class="text-5xl font-black font-mono big-number text-aurora-green">--</div>
+                    <div>
+                        <div id="score-label" class="text-sm font-semibold">Calculating...</div>
+                        <div class="text-[10px] text-gray-400 font-mono">
+                            <span id="mini-kp">Kp --</span> • <span id="mini-clouds">☁ --%</span>
+                        </div>
+                    </div>
+                </div>
+                <svg class="w-6 h-6 chevron text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                </svg>
+            </div>
+
+            <!-- Expanded View -->
+            <div class="px-3 pb-3 border-t border-white/10 pt-3 expanded-content" style="display:none;">
+                <!-- ... existing expanded content ... -->
+                <div class="grid grid-cols-4 gap-2 mb-3">
+                    <div class="text-center p-2 rounded-lg bg-white/5">
+                        <div id="metric-kp" class="text-lg font-bold font-mono">--</div>
+                        <div class="text-[8px] uppercase tracking-widest text-gray-500">Kp</div>
+                    </div>
+                    <div class="text-center p-2 rounded-lg bg-white/5">
+                        <div id="metric-bz" class="text-lg font-bold font-mono">--</div>
+                        <div class="text-[8px] uppercase tracking-widest text-gray-500">Bz</div>
+                    </div>
+                    <div class="text-center p-2 rounded-lg bg-white/5">
+                        <div id="metric-clouds" class="text-lg font-bold font-mono">--</div>
+                        <div class="text-[8px] uppercase tracking-widest text-gray-500">Clouds</div>
+                    </div>
+                    <div class="text-center p-2 rounded-lg bg-white/5">
+                        <div id="metric-moon" class="text-lg font-bold font-mono">--</div>
+                        <div class="text-[8px] uppercase tracking-widest text-gray-500">Moon</div>
+                    </div>
+                </div>
+                <div class="p-2 rounded-lg bg-white/5 mb-3">
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-[9px] font-mono uppercase text-gray-400">Magnetometer</span>
+                        <span id="mag-value" class="text-xs font-mono font-bold text-aurora-green">-- nT/min</span>
+                    </div>
+                    <div class="w-full h-2 bg-black rounded-full overflow-hidden flex relative">
+                        <div id="mag-cursor" style="left: 0%"></div>
+                        <div class="w-1/3 bg-green-900/60"></div>
+                        <div class="w-1/3 bg-yellow-900/60"></div>
+                        <div class="w-1/3 bg-red-900/60"></div>
+                    </div>
+                </div>
+                <!-- Kp History Chart -->
+                <div class="p-2 rounded-lg bg-white/5 mb-3">
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-[9px] font-mono uppercase text-gray-400">Kp History (24h)</span>
+                    </div>
+                    <div class="h-16">
+                        <canvas id="kp-history-canvas"></canvas>
+                    </div>
+                </div>
+                <!-- ... rest of footer ... -->
+                <button id="log-sighting-btn"
+                    class="btn-field w-full bg-white text-black rounded-lg text-sm font-bold hover:bg-gray-200 active:scale-[0.98]"
+                    onclick="event.stopPropagation(); openSightingModal()">📷 LOG SIGHTING</button>
+                <div id="last-update" class="text-[8px] uppercase text-center mt-2 text-gray-500 font-mono">--</div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet.wms@0.2.0/dist/leaflet.wms.js"></script>
+    <!-- Chart.js for Kp History -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+    <!-- ... Sighting Modal ... -->
+    <div id="sighting-modal" class="fixed inset-0 z-50 hidden" onclick="closeSightingModal(event)">
+        <!-- ... modal content ... -->
+        <div class="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
+        <div class="absolute inset-4 top-auto bottom-4 glass-panel rounded-2xl p-4 max-h-[80vh] overflow-y-auto"
+            onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold">📷 Log Aurora Sighting</h2>
+                <button onclick="closeSightingModal()" class="text-2xl">&times;</button>
+            </div>
+
+            <!-- ... existing modal body ... -->
+            <div class="mb-4">
+                <div class="flex gap-2 mb-3">
+                    <button onclick="startCamera()"
+                        class="flex-1 btn-field bg-aurora-green/20 border border-aurora-green rounded-lg text-sm">
+                        📸 Take Photo
+                    </button>
+                    <label
+                        class="flex-1 btn-field bg-white/10 border border-white/20 rounded-lg text-sm flex items-center justify-center cursor-pointer">
+                        📁 Upload
+                        <input type="file" accept="image/*" class="hidden" onchange="handleFileUpload(event)">
+                    </label>
+                </div>
+                <video id="camera-preview" class="hidden w-full rounded-lg bg-black" autoplay playsinline></video>
+                <canvas id="camera-canvas" class="hidden"></canvas>
+                <img id="sighting-preview" class="hidden w-full rounded-lg max-h-48 object-cover">
+                <button id="capture-btn"
+                    class="hidden w-full btn-field bg-aurora-green text-black rounded-lg mt-2 font-bold"
+                    onclick="capturePhoto()">
+                    CAPTURE
+                </button>
+            </div>
+
+            <!-- Notes -->
+            <div class="mb-4">
+                <label class="text-xs text-gray-400 block mb-1">Notes (optional)</label>
+                <textarea id="sighting-notes" class="w-full bg-black/50 border border-white/20 rounded-lg p-2 text-sm"
+                    rows="2" placeholder="Describe what you saw..."></textarea>
+            </div>
+
+            <!-- Save -->
+            <button onclick="saveSighting()" class="w-full btn-field bg-white text-black rounded-lg font-bold text-sm">
+                💾 SAVE SIGHTING
+            </button>
+
+            <!-- Gallery -->
+            <div class="mt-4 border-t border-white/10 pt-4">
+                <h3 class="text-sm font-semibold mb-2">Your Sightings</h3>
+                <div id="sightings-gallery" class="grid grid-cols-3 gap-2">
+                    <!-- Sightings will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ... CONFIG ...
+        const CONFIG = {
+            lat: 59.33,
+            lng: 18.07,
+            zoom: 5,
+            backendUrl: window.location.hostname === 'localhost' ? 'http://localhost:34371' : '',
+            apis: { weather: '/api/weather', noaaBz: '/api/noaa/bz', noaaKp: '/api/noaa/kp', tgo: '/api/tgo', ovation: '/api/ovation' },
+            owmApiKey: 'YOUR_OWM_API_KEY',
+            refreshInterval: 60000,
+            isCity: true,
+        };
+
+        // ... STATE ...
+        let state = {
+            kp: null, bz: null, clouds: null, wind: null, dbdt: null,
+            sunAltitude: null, moonPhase: null, moonAltitude: null,
+            score: null, status: 'LOADING', darknessStatus: 'CALCULATING...',
+            locationName: 'Locating...', targetKp: null, lastUpdate: null,
+            lat: CONFIG.lat, lng: CONFIG.lng, expanded: false,
+            cloudLayerEnabled: false, lightPollutionEnabled: false,
+            weatherForecast: [],
+            timeOffset: 0 // Hours ahead
+        };
+
+        // ... MAP SETUP ...
+        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([CONFIG.lat, CONFIG.lng], CONFIG.zoom);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 18,
+            subdomains: 'abcd',
+        }).addTo(map);
+
+        // Met.no WMS Cloud Layer
+        let cloudLayer = null;
+        const MET_NO_WMS = "https://wms.met.no/weather/service/wms";
+
+        // ============================================================
+        // AURORA HEATMAP (NOAA OVATION Prime Data)
+        // ============================================================
+        let auroraHeatLayer = null;
+        let baseHeatData = []; // Store raw data for dynamic scaling
+        let forecastKpData = []; // Store Kp forecast
+        const OVATION_URL = 'https://services.swpc.noaa.gov/json/ovation_aurora_latest.json';
+        const KP_URL = '/api/noaa/kp';
+
+        // Helper to parse NOAA Kp JSON
+        function parseKpData(data) {
+            // Data format: [["time_tag","Kp",...], ["2024-...", "3.00",...]]
+            const header = data[0];
+            const kpIdx = header.indexOf("Kp");
+            const timeIdx = header.indexOf("time_tag");
+
+            return data.slice(1).map(row => {
+                // Ensure ISO format: "2024-01-01 12:00:00" -> "2024-01-01T12:00:00Z"
+                const timeStr = row[timeIdx].replace(" ", "T") + "Z";
+                return {
+                    time: new Date(timeStr),
+                    kp: parseFloat(row[kpIdx])
+                };
+            }).sort((a, b) => a.time - b.time);
+        }
+
+        async function fetchForecastData() {
+            try {
+                const res = await fetch(KP_URL);
+                if (res.ok) {
+                    const json = await res.json();
+                    forecastKpData = parseKpData(json);
+                    console.log(`Kp Forecast: Loaded ${forecastKpData.length} predictions`);
+                }
+            } catch (e) {
+                console.warn("Failed to load Kp forecast:", e);
+            }
+        }
+
+        async function fetchAuroraForecast() {
+            try {
+                // Fetch Kp forecast in parallel
+                fetchForecastData();
+
+                const res = await fetch(OVATION_URL);
+                if (!res.ok) throw new Error('OVATION fetch failed');
+                const data = await res.json();
+
+                // OVATION data might be wrapped in GeoJSON-like object
+                const points = Array.isArray(data) ? data : (data.coordinates || []);
+
+                if (!points.length) {
+                    console.warn('OVATION API returned valid JSON but no points found:', data);
+                }
+
+                // Filter out zero-probability points & Store Base Data
+                baseHeatData = points
+                    .filter(point => point[2] > 0) // Show positive probabilities
+                    .map(point => [point[1], point[0], point[2] / 100]); // [lat, lng, intensity]
+
+                updateAuroraLayer(1.0); // Initial draw with scale 1.0
+
+                console.log(`Aurora Forecast: Loaded ${baseHeatData.length} data points`);
+
+            } catch (e) {
+                console.warn('OVATION fetch failed, using fallback:', e);
+                // Fallback: Create minimal visible oval if API fails
+                if (!auroraHeatLayer) {
+                    const fallbackData = [];
+                    for (let lng = -180; lng <= 180; lng += 10) {
+                        fallbackData.push([68, lng, 0.3]);
+                        fallbackData.push([70, lng, 0.5]);
+                        fallbackData.push([72, lng, 0.3]);
+                    }
+                    baseHeatData = fallbackData;
+                    updateAuroraLayer(1.0);
+                }
+            }
+        }
+
+        function updateAuroraLayer(intensityScale) {
+            // Apply scale to base data
+            // Constrain scale to avoid invisible (0) or oversaturated (>2-3)
+            const safeScale = Math.max(0.1, Math.min(intensityScale, 3.0));
+
+            const scaledData = baseHeatData.map(p => [p[0], p[1], Math.min(1.0, p[2] * safeScale)]);
+
+            // Remove old layer if exists
+            if (auroraHeatLayer) {
+                map.removeLayer(auroraHeatLayer);
+            }
+
+            // Create heatmap layer (using factory to avoid L.heatLayer undefined issues)
+            auroraHeatLayer = (window.auroraHeatLayerFactory || L.heatLayer)(scaledData, {
+                radius: 25,
+                blur: 15,
+                maxZoom: 10,
+                max: 1.0,
+                gradient: {
+                    0.0: 'transparent',
+                    0.05: '#001a00',
+                    0.1: '#003300',
+                    0.2: '#004d00',
+                    0.5: '#00ff9d',
+                    0.8: '#00ffcc',
+                    1.0: '#ffffff'
+                }
+            }).addTo(map);
+
+            // Re-apply daylight mask
+            applyDaylightMask();
+        }
+
+        // Get Kp for a specific time
+        function getKpForTime(date) {
+            if (!forecastKpData.length) return null;
+            // Find closest forecast point
+            const time = date.getTime();
+            // Data is sorted. Find first point where timestamp > target
+            const nextIdx = forecastKpData.findIndex(d => d.time.getTime() >= time);
+
+            if (nextIdx === -1) return forecastKpData[forecastKpData.length - 1].kp; // Use last known
+            if (nextIdx === 0) return forecastKpData[0].kp; // Use first known
+
+            // Linear interpolation
+            const p1 = forecastKpData[nextIdx - 1];
+            const p2 = forecastKpData[nextIdx];
+            const t1 = p1.time.getTime();
+            const t2 = p2.time.getTime();
+            const ratio = (time - t1) / (t2 - t1);
+
+            return p1.kp + (p2.kp - p1.kp) * ratio;
+        }
+
+
+        // ... User Marker & Compass ...
+        let deviceHeading = 0;
+        const userIcon = L.divIcon({
+            className: 'user-marker-container',
+            html: `<div class="relative">
+                <div class="compass-arrow" id="compass-arrow" style="transform: translateX(-50%) rotate(0deg);"></div>
+                <div class="w-4 h-4 bg-blue-500 rounded-full border-2 border-white user-pulse"></div>
+            </div>`,
+            iconSize: [16, 16], iconAnchor: [8, 8],
+        });
+        let userMarker = L.marker([CONFIG.lat, CONFIG.lng], { icon: userIcon }).addTo(map);
+
+        // ... Compass Logic (unchanged) ...
+        function updateCompassArrow(heading) {
+            const arrow = document.getElementById('compass-arrow');
+            if (arrow) arrow.style.transform = `translateX(-50%) rotate(${-heading}deg)`;
+        }
+        function requestOrientationPermission() { /* ... */ }
+        function handleOrientation(event) { /* ... */ }
+        requestOrientationPermission();
+
+        // ============================================================
+        // TIMELINE SLIDER (Cloud Forecast & UI Update)
+        // ============================================================
+        function updateTimeline(hours) {
+            const hoursNum = parseInt(hours);
+            state.timeOffset = hoursNum;
+
+            // Calculate Forecast Time (Live)
+            const now = new Date();
+            const forecastTime = new Date(now.getTime() + hoursNum * 60 * 60 * 1000);
+
+            // WMS Time (Rounded to hour for strict API compliance)
+            const wmsTime = new Date(forecastTime);
+            wmsTime.setMinutes(0, 0, 0, 0);
+
+            // Format time display
+            const timeStr = forecastTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            document.getElementById('forecast-time-display').textContent = hoursNum === 0 ? "Forecast: Live" : `Forecast for: ${timeStr}`;
+
+            // WMS Layer Sync
+            if (state.cloudLayerEnabled && cloudLayer) {
+                cloudLayer.setParams({ time: wmsTime.toISOString() });
+            }
+
+            // AURORA FORECAST LOGIC
+            if (forecastKpData.length > 0) {
+                const currentKp = getKpForTime(now) || 1;
+                const forecastKp = getKpForTime(forecastTime) || currentKp;
+
+                // Scale factor: If forecast Kp is double current, intensity doubles.
+                // Dampen extreme swings: Square root of ratio? keep linear for drama?
+                // Avoid division by zero
+                const ratio = forecastKp / Math.max(1.0, currentKp);
+
+                // Debug log
+                console.log(`Forecast Debug: +${hoursNum}h | Now: ${currentKp.toFixed(2)} | Future: ${forecastKp.toFixed(2)} | Ratio: ${ratio.toFixed(2)}`);
+
+                if (hoursNum > 0) {
+                    document.getElementById('forecast-time-display').textContent += ` (Est. Kp: ${forecastKp.toFixed(1)})`;
+                }
+
+                // Only update if ratio is significantly different or returning to 1.0
+                updateAuroraLayer(ratio);
+            } else {
+                console.warn("Forecast Kp Data missing or empty");
+            }
+
+            // Refresh UI (will recalculate sun position for forecast time)
+            updateUI();
+        }
+
+        // ... deleteSighting, Search, etc ...
+        function deleteSighting(id, event) { /* ... */ }
+        // ... debounceSearch, searchLocation, selectLocation, displaySearchResults ...
+        function debounceSearch(query) { /* ... */ }
+        function searchLocation(query) { /* ... */ }
+        function displaySearchResults(results) { /* ... */ }
+        function selectLocation(lat, lon, name) { /* ... */ }
+        function showSearchResults() { /* ... */ }
+        function hideSearchResults() { document.getElementById('search-results').classList.add('hidden'); }
+
+        // ============================================================
+        // LAYERS MENU
+        // ============================================================
+        function toggleLayersMenu() {
+            document.getElementById('layers-menu').classList.toggle('open');
+        }
+
+        function toggleCloudLayer() {
+            state.cloudLayerEnabled = !state.cloudLayerEnabled;
+            const toggle = document.querySelector('#cloud-toggle svg');
+            toggle.classList.toggle('hidden', !state.cloudLayerEnabled);
+
+            if (state.cloudLayerEnabled) {
+                // Calculate UTC time for WMS (Met.no requires UTC, rounded to hour)
+                const now = new Date();
+                now.setHours(now.getHours() + state.timeOffset);
+                now.setMinutes(0, 0, 0);
+                // Convert to UTC ISO string (Z suffix)
+                const utcTime = now.toISOString();
+
+                cloudLayer = L.tileLayer.wms(MET_NO_WMS, {
+                    layers: 'cloud_area_fraction',
+                    format: 'image/png',
+                    transparent: true,
+                    version: '1.3.0',
+                    crs: L.CRS.EPSG4326,
+                    opacity: 0.5,
+                    attribution: 'Data © MET Norway',
+                    time: utcTime
+                }).addTo(map);
+
+                document.getElementById('cloud-layer-desc').textContent = "Met.no Cloud Forecast";
+            } else if (cloudLayer) {
+                map.removeLayer(cloudLayer);
+                cloudLayer = null;
+            }
+        }
+
+        // ... toggleLightPollution, toggleRedMode, flyToMyLocation, calculateTargetKp ...
+        let lightPollutionLayer = null;
+        function toggleLightPollution() {
+            state.lightPollutionEnabled = !state.lightPollutionEnabled;
+            const toggle = document.querySelector('#pollution-toggle svg');
+            toggle.classList.toggle('hidden', !state.lightPollutionEnabled);
+
+            if (state.lightPollutionEnabled) {
+                lightPollutionLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/2023-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png', {
+                    opacity: 0.5,
+                    maxZoom: 8,
+                    minZoom: 1,
+                    attribution: 'NASA VIIRS',
+                }).addTo(map);
+            } else if (lightPollutionLayer) {
+                map.removeLayer(lightPollutionLayer);
+                lightPollutionLayer = null;
+            }
+        }
+
+        function toggleRedMode() {
+            document.body.classList.toggle('red-mode');
+            const isRed = document.body.classList.contains('red-mode');
+            document.querySelector('#redmode-toggle svg').classList.toggle('hidden', !isRed);
+            localStorage.setItem('aurora-red-mode', isRed);
+        }
+
+        if (localStorage.getItem('aurora-red-mode') === 'true') {
+            document.body.classList.add('red-mode');
+            document.querySelector('#redmode-toggle svg').classList.remove('hidden');
+        }
+
+        function flyToMyLocation() {
+            if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        state.lat = pos.coords.latitude;
+                        state.lng = pos.coords.longitude;
+                        state.targetKp = calculateTargetKp(state.lat);
+                        CONFIG.isCity = state.lat < 64;
+                        state.locationName = `${state.lat.toFixed(2)}°N`;
+                        userMarker.setLatLng([state.lat, state.lng]);
+                        map.flyTo([state.lat, state.lng], 8, { duration: 1.5 });
+                        document.getElementById('location-name').textContent = state.locationName;
+                        refresh();
+                    },
+                    (err) => alert('Could not get location: ' + err.message)
+                );
+            }
+        }
+
+        function calculateTargetKp(lat) {
+            return Math.max(1, Math.min(9, 10 - ((lat - 50) / 1.5)));
+        }
+
+        // ============================================================
+        // INTELLIGENCE ENGINE (SunCalc + Daylight Mask)
+        // ============================================================
+        function calculateSunMoon(targetDate = new Date()) {
+            const sunPos = SunCalc.getPosition(targetDate, state.lat, state.lng);
+            const moonPos = SunCalc.getMoonPosition(targetDate, state.lat, state.lng);
+            const moonIllum = SunCalc.getMoonIllumination(targetDate);
+
+            state.sunAltitude = sunPos.altitude * (180 / Math.PI);
+            state.moonAltitude = moonPos.altitude * (180 / Math.PI);
+            state.moonPhase = moonIllum.fraction;
+
+            // Set Darkness Status
+            if (state.sunAltitude > 3) state.darknessStatus = 'DAYLIGHT ☀️';
+            else if (state.sunAltitude > -6) state.darknessStatus = 'CIVIL TWILIGHT';
+            else if (state.sunAltitude > -12) state.darknessStatus = 'NAUTICAL TWILIGHT';
+            else if (state.sunAltitude > -18) state.darknessStatus = 'ASTRONOMICAL TWILIGHT';
+            else state.darknessStatus = 'PITCH DARK ✓';
+        }
+
+        // ============================================================
+        // DAYLIGHT MASK - Hide Aurora Heatmap During Daylight
+        // ============================================================
+        function applyDaylightMask() {
+            // Civil Twilight threshold: sun altitude > -6 degrees
+            const isDaylight = state.sunAltitude > -6;
+
+            if (auroraHeatLayer) {
+                if (isDaylight) {
+                    // Hide the aurora heatmap completely
+                    auroraHeatLayer.setOptions({ max: 0 });
+                } else {
+                    // Restore aurora visibility
+                    auroraHeatLayer.setOptions({ max: 1.0 });
+                }
+            }
+
+            return isDaylight;
+        }
+
+        function calculateScore() {
+            const kp = state.kp || 0;
+            const bz = state.bz || 0;
+            const clouds = state.clouds || 0;
+            const sunAlt = state.sunAltitude || 0;
+            const moonFrac = state.moonPhase || 0;
+            const moonAlt = state.moonAltitude || 0;
+            const targetKp = state.targetKp || 5;
+
+            // DAYLIGHT CHECK - Force score to 0 if sun is up
+            if (sunAlt > -6) {
+                return 0;
+            }
+
+            let score = Math.max(0, (kp - targetKp + 2)) * 15;
+            if (bz < 0) score += Math.abs(bz) * 5;
+            if (state.dbdt && state.dbdt > 30) score += 30;
+            if (clouds > 20) score -= (clouds * 0.6);
+            if (sunAlt > -12) score = 0;
+            if (moonFrac > 0.5 && moonAlt > 0) score -= 15;
+            if (CONFIG.isCity) score -= 10;
+
+            return Math.max(0, Math.min(100, Math.round(score)));
+        }
+
+        function getScoreLabel(score) {
+            // DAYLIGHT CHECK - Override label
+            if (state.sunAltitude > -6) return '☀️ DAYLIGHT - AURORA INVISIBLE';
+            if (state.clouds > 80) return 'Clouded out ☁️';
+            if (score >= 70) return 'GO NOW! 🚀';
+            if (score >= 50) return 'Good chance';
+            if (score >= 30) return 'Worth checking';
+            if (score > 0) return 'Low chance';
+            return 'Stay inside';
+        }
+
+        function getStatusLevel(score) {
+            // DAYLIGHT CHECK
+            if (state.sunAltitude > -6) return 'DAY';
+            if (state.clouds > 80) return 'CLOUD';
+            if (score >= 70) return 'HIGH';
+            if (score >= 40) return 'MED';
+            return 'LOW';
+        }
+
+        // ============================================================
+        // API FETCHING
+        // ============================================================
+        function apiUrl(path) { return CONFIG.backendUrl + path; }
+
+        async function fetchNOAAData() {
+            try {
+                const [bzRes, kpRes] = await Promise.all([
+                    fetch(apiUrl(CONFIG.apis.noaaBz)),
+                    fetch(apiUrl(CONFIG.apis.noaaKp))
+                ]);
+                if (bzRes.ok) {
+                    const data = await bzRes.json();
+                    state.bz = parseFloat(data.Bz) || null;
+                }
+                if (kpRes.ok) {
+                    const data = await kpRes.json();
+                    if (data.length > 1) state.kp = parseFloat(data[data.length - 1][1]) || null;
+                }
+            } catch (e) { console.warn('NOAA fetch failed:', e); }
+        }
+
+        async function fetchTGO() {
+            try {
+                const res = await fetch(apiUrl(CONFIG.apis.tgo));
+                if (res.ok) {
+                    const data = await res.json();
+                    state.dbdt = parseFloat(data.db_dt) || null;
+                }
+            } catch (e) { state.dbdt = 5 + Math.random() * 15; }
+        }
+
+        async function fetchWeather() {
+            try {
+                const url = apiUrl(`${CONFIG.apis.weather}?lat=${state.lat.toFixed(4)}&lon=${state.lng.toFixed(4)}`);
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    state.weatherForecast = data;
+                    if (data.length > 0) {
+                        state.clouds = data[0].cloudCover !== null ? Math.round(data[0].cloudCover) : null;
+                        state.wind = data[0].windSpeed !== null ? Math.round(data[0].windSpeed) : null;
+                    }
+                }
+            } catch (e) { console.warn('Weather fetch failed:', e); }
+        }
+
+        // ============================================================
+        // UI UPDATE
+        // ============================================================
+        function updateUI() {
+            const timelineVal = parseInt(document.getElementById('timeline-slider').value);
+            const forecastDate = new Date();
+            forecastDate.setHours(forecastDate.getHours() + timelineVal);
+
+            // Update forecasted weather metrics
+            if (state.weatherForecast && state.weatherForecast[timelineVal]) {
+                const f = state.weatherForecast[timelineVal];
+                state.clouds = f.cloudCover !== null ? Math.round(f.cloudCover) : state.clouds;
+                state.wind = f.windSpeed !== null ? Math.round(f.windSpeed) : state.wind;
+            }
+
+            // Calculate Sun/Moon for the forecast time
+            calculateSunMoon(forecastDate);
+
+            // Apply Daylight Mask
+            const isDaylight = applyDaylightMask();
+
+            // Calculate Score (will be 0 if daylight)
+            const score = calculateScore();
+            state.score = score;
+            state.status = getStatusLevel(score);
+            state.lastUpdate = new Date();
+
+            // Update Big Score
+            const bigScore = document.getElementById('big-score');
+            bigScore.textContent = score;
+            bigScore.classList.remove('text-aurora-green', 'text-aurora-yellow', 'text-aurora-red', 'text-gray-400', 'opacity-50');
+
+            if (isDaylight) {
+                bigScore.classList.add('text-gray-400', 'opacity-50');
+            } else if (score >= 70) {
+                bigScore.classList.add('text-aurora-green');
+            } else if (score >= 40) {
+                bigScore.classList.add('text-aurora-yellow');
+            } else {
+                bigScore.classList.add('text-aurora-red');
+            }
+
+            document.getElementById('score-label').textContent = getScoreLabel(score);
+            document.getElementById('mini-kp').textContent = `Kp ${state.kp?.toFixed(0) || '--'}`;
+            document.getElementById('mini-clouds').textContent = `☁ ${state.clouds ?? '--'}%`;
+
+            // Status Pill
+            const pill = document.getElementById('status-pill');
+            pill.textContent = state.status;
+            pill.classList.remove('bg-aurora-green', 'bg-aurora-yellow', 'bg-aurora-red', 'bg-gray-600');
+            if (state.status === 'HIGH') pill.classList.add('bg-aurora-green');
+            else if (state.status === 'MED') pill.classList.add('bg-aurora-yellow');
+            else if (state.status === 'DAY' || state.status === 'CLOUD') pill.classList.add('bg-gray-600');
+            else pill.classList.add('bg-aurora-red');
+
+            // Darkness Status
+            document.getElementById('darkness-status').textContent = state.darknessStatus;
+
+            // Metrics
+            document.getElementById('metric-kp').textContent = state.kp !== null ? state.kp.toFixed(0) : '--';
+            document.getElementById('metric-bz').textContent = state.bz !== null ? state.bz.toFixed(1) : '--';
+            document.getElementById('metric-clouds').textContent = state.clouds !== null ? state.clouds + '%' : '--';
+            document.getElementById('metric-moon').textContent = state.moonPhase !== null ? Math.round(state.moonPhase * 100) + '%' : '--';
+
+            // Magnetometer
+            const magValue = document.getElementById('mag-value');
+            const magCursor = document.getElementById('mag-cursor');
+            if (state.dbdt !== null) {
+                magValue.textContent = state.dbdt.toFixed(1) + ' nT/min';
+                magValue.classList.remove('text-aurora-green', 'text-aurora-yellow', 'text-aurora-red');
+                if (state.dbdt > 30) magValue.classList.add('text-aurora-red');
+                else if (state.dbdt > 15) magValue.classList.add('text-aurora-yellow');
+                else magValue.classList.add('text-aurora-green');
+                const percent = Math.min(100, (state.dbdt / 50) * 100);
+                magCursor.style.left = percent + '%';
+            }
+
+            document.getElementById('last-update').textContent = 'Updated: ' + state.lastUpdate.toLocaleTimeString();
+        }
+
+        // ============================================================
+        // MAIN LOOP
+        // ============================================================
+        async function refresh() {
+            await Promise.all([fetchNOAAData(), fetchTGO(), fetchWeather()]);
+            updateUI();
+        }
+
+        function initGeolocation() {
+            if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        state.lat = pos.coords.latitude;
+                        state.lng = pos.coords.longitude;
+                        state.targetKp = calculateTargetKp(state.lat);
+                        CONFIG.isCity = state.lat < 64;
+                        state.locationName = `${state.lat.toFixed(2)}°N`;
+                        userMarker.setLatLng([state.lat, state.lng]);
+                        map.setView([state.lat, state.lng], 6);
+                        document.getElementById('location-name').textContent = state.locationName;
+                        refresh();
+                    },
+                    () => { state.targetKp = calculateTargetKp(59.33); refresh(); }
+                );
+            } else { state.targetKp = calculateTargetKp(59.33); refresh(); }
+        }
+
+        initGeolocation();
+        setInterval(refresh, CONFIG.refreshInterval);
+
+        function toggleExpand() {
+            const sheet = document.getElementById('bottom-sheet');
+            const content = sheet.querySelector('.expanded-content');
+            state.expanded = !state.expanded;
+            sheet.classList.toggle('expanded', state.expanded);
+            content.style.display = state.expanded ? 'block' : 'none';
+        }
+
+        // Close layers menu when clicking elsewhere
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#layers-menu') && !e.target.closest('[aria-label="Map Layers"]')) {
+                document.getElementById('layers-menu').classList.remove('open');
+            }
+        });
+
+        // ============================================================
+        // LOG SIGHTING (Camera & Gallery)
+        // ============================================================
+        let cameraStream = null;
+        let currentSightingImage = null;
+
+        function openSightingModal() {
+            document.getElementById('sighting-modal').classList.remove('hidden');
+            loadSightingsGallery();
+        }
+
+        function closeSightingModal(e) {
+            if (e && e.target !== e.currentTarget) return;
+            document.getElementById('sighting-modal').classList.add('hidden');
+            stopCamera();
+        }
+
+        async function startCamera() {
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                const video = document.getElementById('camera-preview');
+                video.srcObject = cameraStream;
+                video.classList.remove('hidden');
+                document.getElementById('capture-btn').classList.remove('hidden');
+                document.getElementById('sighting-preview').classList.add('hidden');
+            } catch (err) {
+                alert('Could not access camera: ' + err.message);
+            }
+        }
+
+        function stopCamera() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+            document.getElementById('camera-preview').classList.add('hidden');
+            document.getElementById('capture-btn').classList.add('hidden');
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('camera-preview');
+            const canvas = document.getElementById('camera-canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            currentSightingImage = canvas.toDataURL('image/jpeg', 0.8);
+
+            document.getElementById('sighting-preview').src = currentSightingImage;
+            document.getElementById('sighting-preview').classList.remove('hidden');
+            stopCamera();
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                currentSightingImage = e.target.result;
+                document.getElementById('sighting-preview').src = currentSightingImage;
+                document.getElementById('sighting-preview').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function saveSighting() {
+            if (!currentSightingImage) {
+                alert('Please take or upload a photo first!');
+                return;
+            }
+            const sighting = {
+                id: Date.now(),
+                image: currentSightingImage,
+                notes: document.getElementById('sighting-notes').value,
+                timestamp: new Date().toISOString(),
+                location: { lat: state.lat, lng: state.lng, name: state.locationName },
+                conditions: { kp: state.kp, clouds: state.clouds, score: state.score }
+            };
+
+            const sightings = JSON.parse(localStorage.getItem('aurora-sightings') || '[]');
+            sightings.unshift(sighting);
+            // Keep only last 20 sightings to save space
+            if (sightings.length > 20) sightings.pop();
+            localStorage.setItem('aurora-sightings', JSON.stringify(sightings));
+
+            currentSightingImage = null;
+            document.getElementById('sighting-notes').value = '';
+            document.getElementById('sighting-preview').classList.add('hidden');
+            loadSightingsGallery();
+            alert('Sighting saved! 🌌');
+        }
+
+        function loadSightingsGallery() {
+            const gallery = document.getElementById('sightings-gallery');
+            const sightings = JSON.parse(localStorage.getItem('aurora-sightings') || '[]');
+
+            if (sightings.length === 0) {
+                gallery.innerHTML = '<p class="text-xs text-gray-500 col-span-3">No sightings yet. Be the first!</p>';
+                return;
+            }
+
+            gallery.innerHTML = sightings.slice(0, 6).map(s => `
+                <div class="relative aspect-square rounded-lg overflow-hidden cursor-pointer group" onclick="viewSighting(${s.id})">
+                    <img src="${s.image}" class="w-full h-full object-cover">
+                    <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 rounded-full p-1 border border-white/20" onclick="deleteSighting(${s.id}, event)">
+                        <svg class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </div>
+                    <div class="absolute bottom-0 left-0 right-0 bg-black/60 text-[8px] p-1 truncate">
+                        ${new Date(s.timestamp).toLocaleDateString()}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function viewSighting(id) {
+            const sightings = JSON.parse(localStorage.getItem('aurora-sightings') || '[]');
+            const sighting = sightings.find(s => s.id === id);
+            if (!sighting) return;
+
+            alert(`📍 ${sighting.location.name}\n📅 ${new Date(sighting.timestamp).toLocaleString()}\n✨ Score: ${sighting.conditions.score}\n📝 ${sighting.notes || 'No notes'}`);
+        }
+
+        // ============================================================
+        // PUSH NOTIFICATIONS
+        // ============================================================
+        let notificationPermission = Notification.permission;
+        let lastNotifiedScore = 0;
+
+        async function requestNotificationPermission() {
+            if ('Notification' in window && Notification.permission === 'default') {
+                notificationPermission = await Notification.requestPermission();
+            }
+        }
+
+        function checkAndNotify() {
+            if (notificationPermission !== 'granted') return;
+            if (state.score >= 80 && lastNotifiedScore < 80) {
+                new Notification('🌌 Aurora Alert!', {
+                    body: `Score is ${state.score}! Perfect conditions in ${state.locationName}. GO NOW! 🚀`,
+                    icon: '🌌',
+                    tag: 'aurora-alert',
+                    requireInteraction: true
+                });
+            }
+            lastNotifiedScore = state.score || 0;
+        }
+
+        // Request permission on first interaction
+        document.body.addEventListener('click', requestNotificationPermission, { once: true });
+
+        // ============================================================
+        // KP HISTORY GRAPH
+        // ============================================================
+        let kpHistoryChart = null;
+        let kpHistoryData = [];
+
+        async function fetchKpHistory() {
+            try {
+                // NOAA provides 7-day Kp data
+                const res = await fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json');
+                const data = await res.json();
+                // Skip header row, get last 24 entries (3-hour intervals = 24h)
+                kpHistoryData = data.slice(-25, -1).map(row => ({
+                    time: row[0],
+                    kp: parseFloat(row[1])
+                }));
+                renderKpChart();
+            } catch (e) {
+                console.warn('Failed to fetch Kp history:', e);
+            }
+        }
+
+        function renderKpChart() {
+            const ctx = document.getElementById('kp-history-canvas');
+            if (!ctx) return;
+
+            const labels = kpHistoryData.map(d => {
+                const date = new Date(d.time.replace(' ', 'T') + 'Z');
+                return date.getHours() + ':00';
+            });
+            const values = kpHistoryData.map(d => d.kp);
+
+            if (kpHistoryChart) kpHistoryChart.destroy();
+
+            kpHistoryChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        borderColor: '#00ff9d',
+                        backgroundColor: 'rgba(0, 255, 157, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: {
+                            display: true,
+                            ticks: {
+                                color: '#666',
+                                font: { size: 8 },
+                                maxTicksLimit: 6
+                            },
+                            grid: { display: false }
+                        },
+                        y: {
+                            display: true,
+                            min: 0,
+                            max: 9,
+                            ticks: {
+                                color: '#666',
+                                font: { size: 8 },
+                                stepSize: 3
+                            },
+                            grid: { color: 'rgba(255,255,255,0.05)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Fetch Kp history on load
+        fetchKpHistory();
+        setInterval(fetchKpHistory, 3600000); // Refresh hourly
+
+        // Fetch Aurora OVATION data on load and every 15 minutes
+        fetchAuroraForecast();
+        setInterval(fetchAuroraForecast, 900000); // 15 minutes
+
+        // Hook into refresh to check notifications
+        const originalRefresh = refresh;
+        refresh = async function () {
+            await originalRefresh();
+            checkAndNotify();
+        };
+    </script>
+</body>
+
+</html>

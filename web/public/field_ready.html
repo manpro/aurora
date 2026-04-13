@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aurora v2 - Field Ready</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Tailwind CSS (CDN for standalone prototype) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;900&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'aurora-green': '#00ff9d',
+                        'aurora-red': '#ff0000',
+                        'hud-black': 'rgba(0, 0, 0, 0.6)',
+                        'hud-red-bg': '#000000',
+                    },
+                    fontFamily: {
+                        mono: ['"JetBrains Mono"', 'monospace'],
+                        sans: ['"Inter"', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        body {
+            background-color: #000;
+            color: #fff;
+            overflow: hidden; /* Prevent scrolling, app-like feel */
+        }
+        
+        /* Red Mode Overrides - Strict Enforcement */
+        body.red-mode {
+            background-color: #000 !important;
+        }
+        
+        body.red-mode * {
+            color: #ff0000 !important;
+            border-color: #ff0000 !important;
+        }
+
+        body.red-mode .bg-hud-black {
+            background-color: #000000 !important; /* Pure black in red mode */
+            backdrop-filter: none !important;     /* Remove blur for crisp contrast */
+        }
+
+        body.red-mode .map-overlay-layer {
+            filter: grayscale(100%) sepia(100%) hue-rotate(-50deg) saturate(600%) contrast(200%);
+        }
+
+        /* Map controls adjustment */
+        .leaflet-control-containter .leaflet-top {
+            top: 80px; /* Push down below HUD header */
+        }
+        
+        /* Glove Friendly Buttons */
+        .btn-field {
+            min-height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            touch-action: manipulation;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <!-- 1. FULLSCREEN MAP (z-0) -->
+    <div id="map" class="fixed inset-0 z-0 bg-black"></div>
+
+    <!-- 2. HUD LAYER (z-10) -->
+    <div class="relative z-10 flex flex-col justify-between h-[100dvh] pointer-events-none">
+        
+        <!-- TOP WAISTBAND: Status -->
+        <header class="bg-hud-black backdrop-blur-md border-b border-white/10 p-4 flex justify-between items-center pointer-events-auto transition-colors duration-300">
+            <div class="flex items-center gap-3">
+                <div id="status-dot" class="w-4 h-4 rounded-full bg-aurora-green animate-pulse shadow-[0_0_10px_#00ff9d]"></div>
+                <div>
+                    <h1 class="text-xs font-mono text-gray-400 leading-none">STATUS</h1>
+                    <span id="status-text" class="text-xl font-black tracking-tighter">GO NOW</span>
+                </div>
+            </div>
+            
+            <button onclick="toggleRedMode()" class="btn-field border border-white/20 rounded px-4 active:bg-white/10 transition-colors" aria-label="Toggle Night Vision">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+        </header>
+
+        <!-- Spacer for map interaction area -->
+        <div class="flex-grow"></div>
+
+        <!-- BOTTOM SHEET: Decision Dashboard -->
+        <footer class="bg-hud-black backdrop-blur-md border-t border-white/10 p-5 pb-8 pointer-events-auto transition-colors duration-300">
+            <!-- Main Metrics -->
+            <div class="grid grid-cols-3 gap-2 mb-6">
+                <div class="bg-white/5 rounded p-3 flex flex-col items-center">
+                    <span class="text-2xl font-bold font-mono">88%</span>
+                    <span class="text-[10px] uppercase tracking-widest opacity-60">Prob</span>
+                </div>
+                <div class="bg-white/5 rounded p-3 flex flex-col items-center">
+                    <span class="text-2xl font-bold font-mono">4<span class="text-sm">m/s</span></span>
+                    <span class="text-[10px] uppercase tracking-widest opacity-60">Wind</span>
+                </div>
+                <div class="bg-white/5 rounded p-3 flex flex-col items-center">
+                    <span class="text-2xl font-bold font-mono">12%</span>
+                    <span class="text-[10px] uppercase tracking-widest opacity-60">Clouds</span>
+                </div>
+            </div>
+
+            <!-- Big Action Button -->
+            <button class="btn-field w-full bg-white text-black rounded text-lg hover:bg-gray-200 active:scale-[0.98] transition-all shadow-[0_0_20px_rgba(255,255,255,0.2)]">
+                LOG SIGHTING
+            </button>
+            <div class="text-[10px] uppercase text-center mt-4 opacity-40 font-mono">v2.0 Field Prototype | Lat: 68.35 N</div>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <script>
+        // --- 1. CONFIGURATION ---
+        const CONFIG = {
+            initialLat: 68.35, // Abisko
+            initialLng: 18.78,
+            zoom: 5
+        };
+
+        // --- 2. MAP INITIALIZATION ---
+        const map = L.map('map', {
+            zoomControl: false, // We'll move or hide zoom for simplified mobile UI
+            attributionControl: false
+        }).setView([CONFIG.initialLat, CONFIG.initialLng], CONFIG.zoom);
+
+        // Dark Matter Tiles (Night Vision Friendly base)
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19,
+            subdomains: 'abcd',
+        }).addTo(map);
+
+        // Mock Aurora Oval (Polygon) - Visualizing the "Green Zone"
+        // This is much faster than SVG paths in React if handled by Leaflet canvas renderer
+        const mockOvalCoords = [
+            [70, 0], [72, 10], [71, 25], [69, 35], [67, 30], [66, 15], [68, 5]
+        ];
+        
+        const auroraPolygon = L.polygon(mockOvalCoords, {
+            color: '#00ff9d',
+            fillColor: '#00ff9d',
+            fillOpacity: 0.2, // Subtle glow
+            weight: 0,        // No hard border
+            className: 'aurora-layer' // For CSS targeting
+        }).addTo(map);
+
+        // Current Location Marker
+        const userIcon = L.divIcon({
+            className: 'custom-div-icon',
+            html: "<div style='background-color: #3b82f6; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px #3b82f6;'></div>",
+            iconSize: [12, 12],
+            iconAnchor: [6, 6]
+        });
+        L.marker([CONFIG.initialLat, CONFIG.initialLng], {icon: userIcon}).addTo(map);
+
+
+        // --- 3. RED MODE LOGIC ---
+        function toggleRedMode() {
+            document.body.classList.toggle('red-mode');
+            
+            // Adjust map visual via CSS filters on the container, 
+            // but we can also swap tiles if needed (CartoDB has no red tiles, so filters are best)
+            const mapContainer = document.getElementById('map');
+            if (document.body.classList.contains('red-mode')) {
+                mapContainer.classList.add('map-overlay-layer');
+            } else {
+                mapContainer.classList.remove('map-overlay-layer');
+            }
+        }
+
+        // --- 4. MOCK DATA UPDATE ---
+        // Simulating the "Live" feel
+        setInterval(() => {
+            const wind = Math.floor(Math.random() * 10);
+            const prob = 80 + Math.floor(Math.random() * 15);
+            // In a real app, we'd update the DOM elements here
+            // console.log("Updating live metrics...");
+        }, 5000);
+
+    </script>
+</body>
+</html>

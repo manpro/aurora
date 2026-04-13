@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #000000;
+  --foreground: #ededed;
+
+  /* Aurora Legacy Palette */
+  --aurora-black: #050000;
+  --aurora-red: #ff0000;
+  --aurora-red-dim: #8a0000;
+
+  /* Phase 2: Deep Space Palette */
+  --space-dark: #020205;
+  --space-blue: #0f1c2e;
+  --space-accent: #00ff9d;
+  /* Aurora Green */
+}
+
+/* Phase 2: Space Theme Background */
+body {
+  background: radial-gradient(circle at 60% -20%, var(--space-blue) 0%, var(--space-dark) 80%);
+  background-attachment: fixed;
+  color: var(--foreground);
+}
+
+/* Red Mode Override Class */
+.red-mode {
+  --background: var(--aurora-black);
+  --foreground: var(--aurora-red);
+}
+
+/* Red Mode Specific Background */
+.red-mode body {
+  background: radial-gradient(circle at 50% 0%, var(--aurora-red-dim) 0%, var(--aurora-black) 90%);
+}
+
+/* Custom Animation Utils */
+@layer utilities {
+  .animate-pulse-slow {
+    animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
